@@ -1,5 +1,5 @@
 /** Release version. The GET response carries it so a site's version can be read from outside. Test keeps it equal to package.json. */
-export const GUARD_VERSION = "1.1.0";
+export const GUARD_VERSION = "1.2.0";
 /** Honeypot input name. Not `company_website` or `website`: browsers autofill those and a real lead would be dropped. */
 export const HONEYPOT_NAME = "hp_extra_note";
 /** Honeypot names the server honours. The old names stay so a stale cached page still gets dropped correctly. */
