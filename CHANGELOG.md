@@ -3,6 +3,17 @@
 Versions are git tags (`vX.Y.Z`); sites pin one. Semver: a patch is a bug fix, a minor adds an option or export,
 a major changes the request/response contract (sites must change code).
 
+## 1.2.0 - 2026-11-07
+
+Forward the visitor's address to ClearSite, so its per-visitor form rate limit works for server-to-server posts.
+
+- New `clearSiteHeaders({ apiKey, visitor })` builds the headers for the site's POST to ClearSite: the same
+  `Content-Type` and `X-API-Key` as before, plus `X-Visitor-IP` set from the incoming request's `CF-Connecting-IP`.
+  Omitted when that header is missing or is not an address; never a guess, never `X-Forwarded-For`, never the site's
+  own address; capped at 64 characters.
+- New `visitorIp(requestOrAddress)` returns that value (or null). Wire format otherwise unchanged. Sites adopt it by
+  passing `clearSiteHeaders({ apiKey, visitor: request })` as the fetch `headers`; until they do nothing changes.
+
 ## 1.1.0 - 2026-11-07
 
 Optional per-IP rate limit on Workers KV. Off unless a KV namespace is bound as `FORM_GUARD_KV`; nothing changes for
