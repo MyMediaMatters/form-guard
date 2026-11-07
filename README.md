@@ -141,6 +141,27 @@ preview with no function makes no failing request (site-checks fails on console 
 `curl https://<site>/api/contact` returns `{"pow":{...},"turnstileSiteKey":...,"guardVersion":"1.0.0"}`. `guardVersion`
 tells you which release a site is running. A GET answers with `pow: null` until `POW_HMAC_KEY` is set and deployed.
 
+## What it stops, and what it does not
+
+Proof-of-work plus the honeypot and fill-time rules stop **direct posters**: scripts that
+POST to the endpoint without loading the page, replay old answers in bulk, or fill every
+field. It does **not** stop a bot that loads the page in a real browser and solves the
+challenge: that bot gets through (seen on Newkirk Chamber, 2026-11-07). Only Turnstile
+(or a per-visitor limit) raises that bar. Treat PoW as the floor, not the whole defence.
+
+Ideas for sites without a Turnstile widget (not built; each would be a minor release):
+
+- **Per-IP rate limit hook.** `guardPost(..., {rateLimit})` takes an async
+  `(ip) => boolean` the site supplies; the package ships a Workers KV helper
+  (`kvRateLimit(env.KV, {max: 5, windowSec: 3600})`) and an in-memory one for tests.
+  Over the limit gives a silent drop. Works on Workers Paid and Pages Functions KV bindings.
+- **One-time challenges.** Store each solved challenge id in KV with the pow TTL so an
+  answer cannot be replayed inside its hour (today it can).
+- **Content rules.** Optional hook to drop posts with links in fields that should not
+  have them, or the same body from many IPs.
+- **Escalate on demand.** `turnstile: "when-flagged"`: require the widget only for an IP
+  that tripped the rate limit, so normal visitors never see it.
+
 ## Fixing a bug for every site
 
 1. Fix it here, add a test that fails first, `pnpm check`, bump `version` in `package.json` **and** `GUARD_VERSION` in
