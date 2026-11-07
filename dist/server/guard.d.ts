@@ -1,4 +1,5 @@
 import { type PowChallenge } from "./pow.js";
+import { type KVLike } from "./ratelimit.js";
 /** The three settings a site sets. All optional: with none set only the honeypots and the stamp rule run. */
 export interface GuardEnv {
     /** Per-site secret (secret_text). Turns on the signed proof-of-work and the server-measured fill time. */
@@ -7,6 +8,14 @@ export interface GuardEnv {
     TURNSTILE_SITE_KEY?: string;
     /** Turnstile secret (secret_text). */
     TURNSTILE_SECRET_KEY?: string;
+    /** Optional per-IP rate limit. A Workers KV namespace bound under this name turns it on; without it nothing runs. */
+    FORM_GUARD_KV?: KVLike;
+    /** Successful posts per IP per window (default 5). Pages and Workers pass vars as strings; both work. */
+    FORM_GUARD_MAX_POSTS?: string | number;
+    /** Window length in seconds (default 3600). */
+    FORM_GUARD_WINDOW_SECONDS?: string | number;
+    /** Site name used in the KV key (default "site"). Matters only when one namespace serves several sites. */
+    FORM_GUARD_SITE?: string;
 }
 export interface GuardConfig {
     pow: PowChallenge | null;
@@ -24,7 +33,7 @@ export type GuardDecision =
 /** Answer success exactly as normal and do nothing else, so the bot learns nothing. */
  | {
     action: "drop";
-    reason: "honeypot" | "too-fast" | "no-stamp";
+    reason: "honeypot" | "too-fast" | "no-stamp" | "rate-limit";
 }
 /** Answer with `status` and `error`. */
  | {
@@ -38,6 +47,8 @@ export interface GuardOptions {
     ip?: string | null;
     /** Extra honeypot field names to honour besides the defaults (hp_extra_note, company_website, website). */
     honeypots?: readonly string[];
+    /** Where to find the KV namespace when it is not on `env` (for example a Next route handler on OpenNext). */
+    kv?: KVLike;
     /** False for a route a visitor hits before the main submit (a Turnstile token works once). Default true. */
     turnstile?: boolean;
     /** For tests. */
@@ -54,7 +65,7 @@ export declare function guardGet(env: GuardEnv): Promise<Response>;
 /**
  * Run before touching the database or sending any email. `body` is the posted fields (JSON body, or
  * `fieldsFromFormData`). Order: honeypots, then proof-of-work and fill time (or the stamp rule without a key),
- * then Turnstile.
+ * then Turnstile, then the optional per-IP rate limit, so only a post that passed every other check is counted.
  */
 export declare function guardPost(body: Record<string, unknown>, env: GuardEnv, opts?: GuardOptions): Promise<GuardDecision>;
 /** The response for a drop or a reject, or null when the post passed. A drop answers `{ok:true}` like a real success. */

@@ -202,3 +202,120 @@ test("fieldsFromFormData: text fields only", () => {
   fd.append("file", new Blob(["x"]), "x.txt");
   assert.deepEqual(fieldsFromFormData(fd), { a: "1" });
 });
+
+// ---------------------------------------------------------------- per-IP rate limit (FORM_GUARD_KV)
+/** In-memory stand-in for a KV namespace that records every call. */
+const fakeKV = (opts = {}) => {
+  const store = new Map();
+  const kv = {
+    store, gets: 0, puts: [],
+    async get(k) { kv.gets++; if (opts.failGet) throw new Error("KV down"); return store.get(k) ?? null; },
+    async put(k, v, o) { if (opts.failPut) throw new Error("KV down"); kv.puts.push({ k, v, o }); store.set(k, v); },
+  };
+  return kv;
+};
+const post = async (e, over = {}) =>
+  guardPost({ pow: await answer(await makePow(KEY, T0)) }, { ...env, ...e }, { now: T0 + 60_000, ip: "203.0.113.7", log: quiet, ...over });
+
+test("rate limit: off without a KV binding (nothing read or written)", async () => {
+  for (let i = 0; i < 20; i++) assert.equal((await post({})).action, "allow");
+});
+
+test("rate limit: sixth post from one IP in the hour is a silent drop, the first five pass", async () => {
+  const kv = fakeKV();
+  for (let i = 0; i < 5; i++) assert.equal((await post({ FORM_GUARD_KV: kv })).action, "allow", `post ${i + 1}`);
+  const d = await post({ FORM_GUARD_KV: kv });
+  assert.deepEqual(d, { action: "drop", reason: "rate-limit" });
+  const res = guardResponse(d);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true });
+});
+
+test("rate limit: one write per accepted post, none for a dropped one; every key expires", async () => {
+  const kv = fakeKV();
+  for (let i = 0; i < 5; i++) await post({ FORM_GUARD_KV: kv });
+  await post({ FORM_GUARD_KV: kv });
+  assert.equal(kv.puts.length, 5);
+  for (const p of kv.puts) assert.ok(p.o.expirationTtl >= 60 && p.o.expirationTtl <= 3660, `ttl ${p.o.expirationTtl}`);
+});
+
+test("rate limit: key holds the site and a hash, never the raw IP", async () => {
+  const kv = fakeKV();
+  await post({ FORM_GUARD_KV: kv, FORM_GUARD_SITE: "newkirk" });
+  const [k] = [...kv.store.keys()];
+  assert.match(k, /^fg:newkirk:[0-9a-f]{32}:\d+$/);
+  assert.ok(!k.includes("203.0.113.7"));
+});
+
+test("rate limit: different IPs are counted separately", async () => {
+  const kv = fakeKV();
+  for (let i = 0; i < 5; i++) await post({ FORM_GUARD_KV: kv, FORM_GUARD_MAX_POSTS: "5" });
+  assert.equal((await post({ FORM_GUARD_KV: kv }, { ip: "198.51.100.9" })).action, "allow");
+  assert.equal((await post({ FORM_GUARD_KV: kv })).action, "drop");
+});
+
+test("rate limit: the window resets", async () => {
+  const kv = fakeKV();
+  const t = Math.floor((T0 + 60_000) / 600_000) * 600_000 + 5000; // early in a 10-minute window
+  // Challenge issued 3 s before each post, so the proof is always fresh whatever the clock.
+  const at = async (now) =>
+    guardPost({ pow: await answer(await makePow(KEY, now - 3000)) },
+      { ...env, FORM_GUARD_KV: kv, FORM_GUARD_MAX_POSTS: "2", FORM_GUARD_WINDOW_SECONDS: "600" },
+      { now, ip: "203.0.113.7", log: quiet });
+  assert.equal((await at(t)).action, "allow");
+  assert.equal((await at(t + 1000)).action, "allow");
+  assert.equal((await at(t + 2000)).action, "drop");
+  assert.equal((await at(t + 600_000)).action, "allow"); // next window
+});
+
+test("rate limit: limit and window come from env (strings), bad values fall back to defaults", async () => {
+  const kv = fakeKV();
+  for (let i = 0; i < 2; i++) await post({ FORM_GUARD_KV: kv, FORM_GUARD_MAX_POSTS: "2" });
+  assert.equal((await post({ FORM_GUARD_KV: kv, FORM_GUARD_MAX_POSTS: "2" })).action, "drop");
+  const kv2 = fakeKV();
+  for (let i = 0; i < 5; i++) await post({ FORM_GUARD_KV: kv2, FORM_GUARD_MAX_POSTS: "banana" });
+  assert.equal((await post({ FORM_GUARD_KV: kv2, FORM_GUARD_MAX_POSTS: "banana" })).action, "drop"); // default 5
+});
+
+test("rate limit: fails OPEN when KV reads or writes throw, and says so in the log", async () => {
+  for (const failing of [{ failGet: true }, { failPut: true }]) {
+    const logs = [];
+    const kv = fakeKV(failing);
+    for (let i = 0; i < 8; i++) {
+      const d = await post({ FORM_GUARD_KV: kv }, { log: (m) => logs.push(m) });
+      assert.equal(d.action, "allow");
+    }
+    assert.ok(logs.length > 0);
+  }
+});
+
+test("rate limit: only counts posts that passed the other checks", async () => {
+  const kv = fakeKV();
+  const e = { ...env, FORM_GUARD_KV: kv };
+  const o = { now: T0 + 60_000, ip: "203.0.113.7", log: quiet };
+  for (let i = 0; i < 10; i++) {
+    await guardPost({ hp_extra_note: "x", pow: await solved() }, e, o); // honeypot
+    await guardPost({ pow: "forged" }, e, o); // bad pow
+    await guardPost({ pow: await answer(await makePow(KEY, T0 + 59_500)) }, e, o); // too fast
+  }
+  assert.equal(kv.gets + kv.puts.length, 0);
+  assert.equal((await guardPost({ pow: await solved() }, e, o)).action, "allow");
+});
+
+test("rate limit: no IP header means no limiting (fail open), and opts.kv works where env has no binding", async () => {
+  const kv = fakeKV();
+  for (let i = 0; i < 8; i++) assert.equal((await post({ FORM_GUARD_KV: kv }, { ip: null })).action, "allow");
+  assert.equal(kv.gets, 0);
+  const kv2 = fakeKV();
+  for (let i = 0; i < 5; i++) await post({}, { kv: kv2 });
+  assert.equal((await post({}, { kv: kv2 })).action, "drop");
+});
+
+test("rate limit: counts after Turnstile, so a failed Turnstile does not use up the visitor's allowance", async () => {
+  const kv = fakeKV();
+  const e = { ...env, FORM_GUARD_KV: kv, TURNSTILE_SITE_KEY: "s", TURNSTILE_SECRET_KEY: "k" };
+  const f = jsonFetch(() => new Response(JSON.stringify({ success: false })));
+  const d = await guardPost({ pow: await solved() }, e, { now: T0 + 60_000, ip: "203.0.113.7", fetch: f, log: quiet });
+  assert.equal(d.action, "reject");
+  assert.equal(kv.gets + kv.puts.length, 0);
+});

@@ -1,8 +1,8 @@
-/* @mmm/form-guard 1.0.0 - plain-page bundle, exposes window.MMMFormGuard */
+/* @mmm/form-guard 1.1.0 - plain-page bundle, exposes window.MMMFormGuard */
 "use strict";
 (() => {
   // src/constants.ts
-  var GUARD_VERSION = "1.0.0";
+  var GUARD_VERSION = "1.1.0";
   var HONEYPOT_NAME = "hp_extra_note";
   var POW_TTL_MS = 60 * 60 * 1e3;
   var CLIENT_MIN_AGE_MS = 2300;

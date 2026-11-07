@@ -1,5 +1,6 @@
 import { FAST_CLOCK_STAMP_AGE_MS, GUARD_VERSION, HONEYPOT_NAMES, MIN_FILL_MS, TURNSTILE_UNAVAILABLE_MESSAGE, VERIFY_FAILED_MESSAGE, } from "../constants.js";
 import { checkPow, makePow } from "./pow.js";
+import { DEFAULT_MAX_POSTS, DEFAULT_WINDOW_SECONDS, overLimit, positiveInt } from "./ratelimit.js";
 import { verifyTurnstile } from "./turnstile.js";
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 /** Text fields of a FormData as a plain object (files are skipped), the shape `guardPost` reads. */
@@ -31,7 +32,7 @@ export async function guardGet(env) {
 /**
  * Run before touching the database or sending any email. `body` is the posted fields (JSON body, or
  * `fieldsFromFormData`). Order: honeypots, then proof-of-work and fill time (or the stamp rule without a key),
- * then Turnstile.
+ * then Turnstile, then the optional per-IP rate limit, so only a post that passed every other check is counted.
  */
 export async function guardPost(body, env, opts = {}) {
     const now = opts.now ?? Date.now();
@@ -74,6 +75,17 @@ export async function guardPost(body, env, opts = {}) {
                 ? { action: "reject", status: 502, error: TURNSTILE_UNAVAILABLE_MESSAGE, reason: "turnstile-unavailable" }
                 : { action: "reject", status: 403, error: VERIFY_FAILED_MESSAGE, reason: "turnstile" };
         }
+    }
+    const kv = opts.kv ?? env.FORM_GUARD_KV;
+    if (kv && opts.ip) {
+        const limited = await overLimit({
+            kv,
+            max: positiveInt(env.FORM_GUARD_MAX_POSTS, DEFAULT_MAX_POSTS),
+            windowSeconds: positiveInt(env.FORM_GUARD_WINDOW_SECONDS, DEFAULT_WINDOW_SECONDS),
+            site: env.FORM_GUARD_SITE || "site",
+        }, opts.ip, env.POW_HMAC_KEY ?? "", now, opts.log);
+        if (limited)
+            return { action: "drop", reason: "rate-limit" };
     }
     return { action: "allow", renderedAt, pow: powChecked };
 }
