@@ -1,6 +1,6 @@
 {
   "name": "@mmm/form-guard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Shared form bot protection for My Media Matters sites: honeypot, signed proof-of-work, server-measured fill time, optional Turnstile.",
   "type": "module",
   "sideEffects": false,

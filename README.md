@@ -20,7 +20,7 @@ not a browser willing to do the work. Per-site stats stay per site (each site ha
 ## Install
 
 ```bash
-pnpm add "github:MyMediaMatters/form-guard#v1.0.0"
+pnpm add "github:MyMediaMatters/form-guard#v1.1.0"
 ```
 
 Pin a **release tag**, never a commit hash or `#main` (`#main` re-resolves on every install; a squash-merged commit hash can vanish). This repo is public, like `site-checks`, so
@@ -136,6 +136,47 @@ Without a bundler's React, use `@mmm/form-guard/client` (`createGuardClient`, `p
 The challenge is requested the first time the visitor touches the form (or at submit), not on page load, so a static
 preview with no function makes no failing request (site-checks fails on console errors).
 
+### Optional: per-IP rate limit (v1.1.0+, Workers KV)
+
+Slows a bot that loads the page and solves the challenge (see the section below). **Off unless a KV namespace is bound
+as `FORM_GUARD_KV`.** Pass `ip` to `guardPost` (`request.headers.get("CF-Connecting-IP")`) as in the handler above.
+
+| Var | Default | Notes |
+|---|---|---|
+| `FORM_GUARD_KV` | none | the KV binding itself, not a string |
+| `FORM_GUARD_MAX_POSTS` | `5` | accepted posts per IP per window |
+| `FORM_GUARD_WINDOW_SECONDS` | `3600` | fixed window |
+| `FORM_GUARD_SITE` | `site` | name in the key; set it if one namespace serves several sites |
+
+Behaviour: only posts that passed every other check are counted; over the limit gets a silent `{ok:true}` and nothing
+is forwarded; keys hold an HMAC of the IP (never the raw IP) and expire with their window; one KV write per accepted
+post; **any KV error lets the post through**. A Next route handler that does not see the binding on `env` passes it as
+`guardPost(body, env, { ip, kv })`.
+
+Add a namespace to a **Pages** project (Cloudflare API; applies to new deployments, so redeploy):
+
+```bash
+source ~/.cloudflare/credentials.env
+ID=$(curl -s -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces" \
+  --data '{"title":"<site>-form-guard"}' | jq -r .result.id)
+curl -s -X PATCH -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/<project>" \
+  --data "{\"deployment_configs\":{\"production\":{\"kv_namespaces\":{\"FORM_GUARD_KV\":{\"namespace_id\":\"$ID\"}}}}}"
+```
+
+Add one to a **Worker** (`wrangler`): `npx wrangler kv namespace create FORM_GUARD_KV`, then put the printed id in the
+Worker's config and deploy:
+
+```toml
+[[kv_namespaces]]
+binding = "FORM_GUARD_KV"
+id = "<id printed above>"
+```
+
+Check before relying on it: the namespace appears in the project's bindings, a test post still goes through, and the
+namespace gains one key per accepted post (keys start `fg:`). Never test with a live form.
+
 ### 4. Check it (never submit a live form)
 
 `curl https://<site>/api/contact` returns `{"pow":{...},"turnstileSiteKey":...,"guardVersion":"1.0.0"}`. `guardVersion`
@@ -149,12 +190,9 @@ field. It does **not** stop a bot that loads the page in a real browser and solv
 challenge: that bot gets through (seen on Newkirk Chamber, 2026-11-07). Only Turnstile
 (or a per-visitor limit) raises that bar. Treat PoW as the floor, not the whole defence.
 
-Ideas for sites without a Turnstile widget (not built; each would be a minor release):
+Further ideas for sites without a Turnstile widget (not built; each would be a minor release):
 
-- **Per-IP rate limit hook.** `guardPost(..., {rateLimit})` takes an async
-  `(ip) => boolean` the site supplies; the package ships a Workers KV helper
-  (`kvRateLimit(env.KV, {max: 5, windowSec: 3600})`) and an in-memory one for tests.
-  Over the limit gives a silent drop. Works on Workers Paid and Pages Functions KV bindings.
+- **Per-IP rate limit.** Built in v1.1.0 (`FORM_GUARD_KV`, see above).
 - **One-time challenges.** Store each solved challenge id in KV with the pow TTL so an
   answer cannot be replayed inside its hour (today it can).
 - **Content rules.** Optional hook to drop posts with links in fields that should not

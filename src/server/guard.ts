@@ -7,6 +7,7 @@ import {
   VERIFY_FAILED_MESSAGE,
 } from "../constants.js";
 import { checkPow, makePow, type PowChallenge } from "./pow.js";
+import { DEFAULT_MAX_POSTS, DEFAULT_WINDOW_SECONDS, overLimit, positiveInt, type KVLike } from "./ratelimit.js";
 import { verifyTurnstile } from "./turnstile.js";
 
 /** The three settings a site sets. All optional: with none set only the honeypots and the stamp rule run. */
@@ -17,6 +18,14 @@ export interface GuardEnv {
   TURNSTILE_SITE_KEY?: string;
   /** Turnstile secret (secret_text). */
   TURNSTILE_SECRET_KEY?: string;
+  /** Optional per-IP rate limit. A Workers KV namespace bound under this name turns it on; without it nothing runs. */
+  FORM_GUARD_KV?: KVLike;
+  /** Successful posts per IP per window (default 5). Pages and Workers pass vars as strings; both work. */
+  FORM_GUARD_MAX_POSTS?: string | number;
+  /** Window length in seconds (default 3600). */
+  FORM_GUARD_WINDOW_SECONDS?: string | number;
+  /** Site name used in the KV key (default "site"). Matters only when one namespace serves several sites. */
+  FORM_GUARD_SITE?: string;
 }
 
 export interface GuardConfig {
@@ -30,7 +39,7 @@ export type GuardDecision =
   /** Pass. `renderedAt` is what to forward to ClearSite as `form_rendered_at`. */
   | { action: "allow"; renderedAt: number; pow: boolean }
   /** Answer success exactly as normal and do nothing else, so the bot learns nothing. */
-  | { action: "drop"; reason: "honeypot" | "too-fast" | "no-stamp" }
+  | { action: "drop"; reason: "honeypot" | "too-fast" | "no-stamp" | "rate-limit" }
   /** Answer with `status` and `error`. */
   | { action: "reject"; status: 403 | 502; error: string; reason: "bad-pow" | "turnstile" | "turnstile-unavailable" };
 
@@ -39,6 +48,8 @@ export interface GuardOptions {
   ip?: string | null;
   /** Extra honeypot field names to honour besides the defaults (hp_extra_note, company_website, website). */
   honeypots?: readonly string[];
+  /** Where to find the KV namespace when it is not on `env` (for example a Next route handler on OpenNext). */
+  kv?: KVLike;
   /** False for a route a visitor hits before the main submit (a Turnstile token works once). Default true. */
   turnstile?: boolean;
   /** For tests. */
@@ -82,7 +93,7 @@ export async function guardGet(env: GuardEnv): Promise<Response> {
 /**
  * Run before touching the database or sending any email. `body` is the posted fields (JSON body, or
  * `fieldsFromFormData`). Order: honeypots, then proof-of-work and fill time (or the stamp rule without a key),
- * then Turnstile.
+ * then Turnstile, then the optional per-IP rate limit, so only a post that passed every other check is counted.
  */
 export async function guardPost(body: Record<string, unknown>, env: GuardEnv, opts: GuardOptions = {}): Promise<GuardDecision> {
   const now = opts.now ?? Date.now();
@@ -121,6 +132,23 @@ export async function guardPost(body: Record<string, unknown>, env: GuardEnv, op
         ? { action: "reject", status: 502, error: TURNSTILE_UNAVAILABLE_MESSAGE, reason: "turnstile-unavailable" }
         : { action: "reject", status: 403, error: VERIFY_FAILED_MESSAGE, reason: "turnstile" };
     }
+  }
+
+  const kv = opts.kv ?? env.FORM_GUARD_KV;
+  if (kv && opts.ip) {
+    const limited = await overLimit(
+      {
+        kv,
+        max: positiveInt(env.FORM_GUARD_MAX_POSTS, DEFAULT_MAX_POSTS),
+        windowSeconds: positiveInt(env.FORM_GUARD_WINDOW_SECONDS, DEFAULT_WINDOW_SECONDS),
+        site: env.FORM_GUARD_SITE || "site",
+      },
+      opts.ip,
+      env.POW_HMAC_KEY ?? "",
+      now,
+      opts.log,
+    );
+    if (limited) return { action: "drop", reason: "rate-limit" };
   }
   return { action: "allow", renderedAt, pow: powChecked };
 }
