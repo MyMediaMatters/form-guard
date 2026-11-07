@@ -23,7 +23,7 @@ not a browser willing to do the work. Per-site stats stay per site (each site ha
 pnpm add "github:MyMediaMatters/form-guard#v1.0.0"
 ```
 
-Pin a **tag**, never `#main` (`#main` re-resolves on every install). This repo is public, like `site-checks`, so
+Pin a **release tag**, never a commit hash or `#main` (`#main` re-resolves on every install; a squash-merged commit hash can vanish). This repo is public, like `site-checks`, so
 Cloudflare Pages, Workers Builds and Vercel can fetch it with no credentials. `dist/` is committed, so there is no
 build step on install. Nothing here is secret: the keys live in each site's environment.
 
@@ -162,14 +162,20 @@ Ideas for sites without a Turnstile widget (not built; each would be a minor rel
 - **Escalate on demand.** `turnstile: "when-flagged"`: require the widget only for an IP
   that tripped the rate limit, so normal visitors never see it.
 
-## Fixing a bug for every site
+## Cutting a release
 
-1. Fix it here, add a test that fails first, `pnpm check`, bump `version` in `package.json` **and** `GUARD_VERSION` in
-   `src/constants.ts` (a test keeps them equal), add a CHANGELOG entry, commit `dist/` (`pnpm build`), open the PR.
-2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. Sites pick it up with one line each: `pnpm add "github:MyMediaMatters/form-guard#vX.Y.Z"` (Dependabot, or
-   `bin/fleet-apply.sh` from the brain for an urgent one), then the normal deploy. Workers need a redeploy.
-   Plain-page sites also get the new `public/form-guard.js` from `prebuild`.
+Sites depend on a **release tag** (`#v1.0.0`), never a commit hash or a branch. A squash merge
+leaves the PR-branch commit dangling, and `#main` moves under every install.
+
+1. Open a PR: change plus a test that fails first, `pnpm check`, bump `version` in `package.json` **and**
+   `GUARD_VERSION` in `src/constants.ts` (a test keeps them equal), add a CHANGELOG entry, `pnpm build` and commit `dist/`.
+2. Merge it (squash is fine).
+3. Tag the merge commit: `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
+4. Bump the sites: one line each, `pnpm add "github:MyMediaMatters/form-guard#vX.Y.Z"`, then the normal deploy.
+   Use a version-bump PR (for many sites, `bin/fleet-apply.sh` from the brain; dry run first). Dependabot's
+   monthly run may also offer it, but it is **not verified** to bump git-tag dependencies (`site-checks` sits
+   on an old tag), so do not rely on it for a security fix. Workers need a redeploy. Plain-page sites get the new
+   `public/form-guard.js` from `prebuild`.
 
 ## Develop
 
