@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copy the plain-page bundle into a site's public folder: `form-guard-copy public/vendor`.
+// Copy the plain-page bundle into a site's public folder: `form-guard-copy public`.
 // Run it from the site's `prebuild` script so the served file always matches the pinned version.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

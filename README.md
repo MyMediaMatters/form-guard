@@ -82,15 +82,21 @@ export async function onRequestPost({ request, env }: { request: Request; env: G
 
 ### 3a. The page: plain JS (no bundler)
 
-Copy the bundle in on every build so it always matches the pinned version, and load it before the page script:
+Copy the bundle in on every build so it always matches the pinned version, and load it before the page script
+(deferred scripts run in order):
 
 ```json
-"scripts": { "prebuild": "form-guard-copy public/vendor" }
+"scripts": { "prebuild": "form-guard-copy public" }
 ```
 
 ```html
-<script src="/vendor/form-guard.js" defer></script>
+<script src="/form-guard.js" defer></script>
+<script src="/site.js" defer></script>
 ```
+
+Put it at the site root, **not** under a path the `_headers` file marks `immutable` (many Weebly ports cache
+`/vendor/*` for a year): the file changes with each version. Commit the copied `public/form-guard.js` or gitignore
+it, the site's call; `prebuild` regenerates it either way.
 
 ```js
 const g = MMMFormGuard.protectForm(form);      // adds the honeypot and a Turnstile slot, starts on first touch
@@ -105,7 +111,7 @@ form.addEventListener("submit", async (e) => {
 ```
 
 `collect()` returns every form field plus `form_rendered_at`, `pow` and `cf-turnstile-response`, after waiting as
-long as needed.
+long as needed. A handler that reads multipart uses `await g.formData()` instead (same fields, as a FormData).
 
 ### 3b. The page: React
 
@@ -142,7 +148,7 @@ tells you which release a site is running. A GET answers with `pow: null` until 
 2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. Sites pick it up with one line each: `pnpm add "github:MyMediaMatters/form-guard#vX.Y.Z"` (Dependabot, or
    `bin/fleet-apply.sh` from the brain for an urgent one), then the normal deploy. Workers need a redeploy.
-   Plain-page sites also get the new `public/vendor/form-guard.js` from `prebuild`.
+   Plain-page sites also get the new `public/form-guard.js` from `prebuild`.
 
 ## Develop
 

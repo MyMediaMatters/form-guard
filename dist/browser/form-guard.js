@@ -166,6 +166,16 @@
         const p = await guard.proof();
         return { ...data, ...p };
       },
+      async formData() {
+        begin();
+        const fd = new FormData(form);
+        const p = await guard.proof();
+        for (const [k, v] of Object.entries(p)) {
+          fd.delete(k);
+          fd.append(k, String(v));
+        }
+        return fd;
+      },
       finish() {
         guard.renew();
       }

@@ -7,6 +7,8 @@ export interface ProtectedForm {
     ready(): Promise<boolean>;
     /** Every field in the form plus the guard fields, ready to JSON-encode and post. */
     collect(): Promise<Record<string, string | number>>;
+    /** The same, as a FormData (for a handler that reads multipart): the form's fields plus the guard fields appended. */
+    formData(): Promise<FormData>;
     /** Call after every post, success or failure. */
     finish(): void;
 }

@@ -16,6 +16,8 @@ export interface ProtectedForm {
   ready(): Promise<boolean>;
   /** Every field in the form plus the guard fields, ready to JSON-encode and post. */
   collect(): Promise<Record<string, string | number>>;
+  /** The same, as a FormData (for a handler that reads multipart): the form's fields plus the guard fields appended. */
+  formData(): Promise<FormData>;
   /** Call after every post, success or failure. */
   finish(): void;
 }
@@ -73,6 +75,16 @@ export function protectForm(form: HTMLFormElement, opts: ProtectFormOptions = {}
       });
       const p: Proof = await guard.proof();
       return { ...data, ...p };
+    },
+    async formData() {
+      begin();
+      const fd = new FormData(form);
+      const p: Proof = await guard.proof();
+      for (const [k, v] of Object.entries(p)) {
+        fd.delete(k);
+        fd.append(k, String(v));
+      }
+      return fd;
     },
     finish() {
       guard.renew();
