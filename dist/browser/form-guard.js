@@ -25,9 +25,9 @@
   // src/client/client.ts
   function createGuardClient(opts) {
     var _a, _b, _c, _d, _e, _f;
-    const doFetch = (_a = opts.fetch) != null ? _a : (...a) => fetch(...a);
+    const doFetch = (_a = opts.fetch) != null ? _a : ((...a) => fetch(...a));
     const now = (_b = opts.now) != null ? _b : Date.now;
-    const sleep = (_c = opts.sleep) != null ? _c : (ms) => new Promise((r) => setTimeout(r, ms));
+    const sleep = (_c = opts.sleep) != null ? _c : ((ms) => new Promise((r) => setTimeout(r, ms)));
     const solve = (_d = opts.solve) != null ? _d : solvePow;
     const minAge = (_e = opts.minAgeMs) != null ? _e : CLIENT_MIN_AGE_MS;
     const refreshAfter = (_f = opts.refreshAfterMs) != null ? _f : CLIENT_REFRESH_AFTER_MS;
